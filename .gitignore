@@ -1,0 +1,18 @@
+# Ignore the data files
+*.csv
+*.parquet
+
+# Ignore the JS download
+jane-street-real-time-market-data-forecasting/kaggle_evaluation
+
+#Ignore wandb
+wandb/
+
+#Ignore trained models
+*.pth
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
