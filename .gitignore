@@ -10,6 +10,8 @@ wandb/
 
 #Ignore trained models
 *.pth
+*.joblib
+*.model
 
 # Python cache files
 __pycache__/
