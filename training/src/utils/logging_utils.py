@@ -1,9 +1,8 @@
-# src/utils/logging_utils.py
 import wandb
 from config import config
 
 def init_wandb():
-    wandb.require("core")
+    wandb.require("core") # TODO: This line fixes a bug but I don't remember what
     return wandb.init(
         project=config.PROJECT_NAME,
         dir=config.WANDB_SAVE_DIR,

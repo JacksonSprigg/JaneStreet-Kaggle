@@ -15,11 +15,15 @@ class JaneStreetLGBM:
             **config.LGBM_PARAMS,
             disable_default_eval_metric=True
         )
+
+    def save_model(self, path: str):
+        """Save model to disk"""
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        joblib.dump(self.model, path)
+        print(f"✨ Model saved to {path}")
     
     def train(self, X_train, y_train, w_train, X_val, y_val, w_val, callback):
         print("\n🚀 Starting LightGBM training...")
-        print(f"Training data shape: {X_train.shape}")
-        print(f"Validation data shape: {X_val.shape}")
         
         start_time = time.time()
         
@@ -44,12 +48,17 @@ class JaneStreetLGBM:
         print(f"Best iteration: {self.model.best_iteration_}")
         print(f"Best score: {self.model.best_score_}")
 
+        # Save best model
+        save_path = os.path.join('trained_models', f'model_iter_{self.model.best_iteration_}_valr2_{callback.best_score}.joblib')
+        self.save_model(save_path)
+
 class CustomLGBMCallback:
-    def __init__(self, logging_interval: int = 10):
+    def __init__(self, logging_interval: int = 10, save_best: bool = True):
         self.logging_interval = logging_interval
         self.start_time = time.time()
         self.best_score = float('-inf')  # For R², higher is better
         self.pbar = None
+        self.save_best = save_best
         
     def __call__(self, env):
         if self.pbar is None:
@@ -69,6 +78,11 @@ class CustomLGBMCallback:
             if val_r2 > self.best_score:
                 self.best_score = val_r2
                 improved = "🔥"
+                
+                # Save checkpoint if requested
+                if self.save_best:
+                    save_path = os.path.join('trained_models', f'backup_best_valr2.joblib')
+                    env.model.save_model(save_path)
             else:
                 improved = "  "
             
