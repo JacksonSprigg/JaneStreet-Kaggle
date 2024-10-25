@@ -27,7 +27,7 @@ class DataLoader:
         
         wandb.log({"data_loading_start": True})
         
-        print("📂 Reading parquet file...")
+        print("Reading parquet file...")
         train = pl.scan_parquet(os.path.join(self.data_path, "train.parquet")).\
             select(
                 pl.int_range(pl.len(), dtype=pl.UInt64).alias("id"),
@@ -43,21 +43,21 @@ class DataLoader:
             "offline_start_date": Config.OFFLINE_START_DATE
         })
         
-        print(f"\n🔍 Filtering data after date {Config.OFFLINE_START_DATE}...")
+        print(f"\nFiltering data after date {Config.OFFLINE_START_DATE}...")
         train_data = train.filter(pl.col("date_id") > Config.OFFLINE_START_DATE)
         
-        print("📥 Converting to pandas DataFrame...")
+        print("Converting to pandas DataFrame...")
         with tqdm(total=1, desc="Loading data") as pbar:
             train_df = train_data.collect().to_pandas()
             pbar.update(1)
         
-        print(f"\n📊 Loaded DataFrame shape: {train_df.shape}")
+        print(f"\nLoaded DataFrame shape: {train_df.shape}")
         
-        print("\n⚡ Splitting data into train/validation sets...")
+        print("\nSplitting data into train/validation sets...")
         result = self._split_data(train_df, exclude_cols)
         
         end_time = time()
-        print(f"\n✨ Data loading completed in {end_time - start_time:.2f} seconds")
+        print(f"\nData loading completed in {end_time - start_time:.2f} seconds")
         print(f"Train set shape: {result[0].shape}")
         print(f"Validation set shape: {result[1].shape}\n")
         

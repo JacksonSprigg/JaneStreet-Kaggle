@@ -1,10 +1,20 @@
 import numpy as np
 
-def r2_score_weighted(y_true, y_pred, sample_weight):
-    """Base R² calculation function"""
-    r2 = 1 - np.average((y_pred - y_true) ** 2, weights=sample_weight) / (np.average((y_true) ** 2, weights=sample_weight) + 1e-38)
+def r2_score_weighted(y_true: np.ndarray, y_pred: np.ndarray, sample_weight: np.ndarray) -> float:
+    
+    # R² = 1 - (∑wi(yi-yi^)²) / (∑wiy²i)
+
+    numerator = np.sum(sample_weight * (y_true - y_pred) ** 2)    # ∑wi(yi-yi^)²
+    denominator = np.sum(sample_weight * y_true ** 2)             # ∑wiy²i
+    
+    # Add small constant to prevent division by zero
+    denominator = denominator + 1e-38
+    
+    r2 = 1 - numerator / denominator                             # 1 - (∑wi(yi-yi^)²)/(∑wiy²i)
     return r2
 
-def r2_lgb_eval(y_true, y_pred):
-    """LightGBM custom eval metric for sklearn API"""
-    return 'r2', r2_score_weighted(y_true, y_pred, None), True
+def r2_lgb_eval(y_true: np.ndarray, y_pred: np.ndarray, sample_weight: np.ndarray = None) -> tuple[str, float, bool]:
+    """LightGBM custom eval metric using competition R² formula.
+    Returns tuple of (metric_name, metric_value, is_higher_better)
+    """
+    return 'r2', r2_score_weighted(y_true, y_pred, sample_weight), True
