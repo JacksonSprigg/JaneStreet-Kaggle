@@ -17,9 +17,9 @@ class JaneStreetLGBM:
         )
 
     def save_model(self, path: str):
-        """Save model to disk"""
+        """Save model to disk using LightGBM's native format"""
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        joblib.dump(self.model, path)
+        self.model.save_model(path)  # Changed from joblib.dump()
         print(f"✨ Model saved to {path}")
     
     def train(self, X_train, y_train, w_train, X_val, y_val, w_val, callback):
