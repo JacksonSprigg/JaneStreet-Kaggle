@@ -3,7 +3,8 @@ import polars as pl
 import pandas as pd
 import wandb
 import numpy as np
-from typing import Tuple, List
+
+from typing import Tuple, List, Dict
 from config import Config
 from tqdm import tqdm
 from time import time
@@ -11,6 +12,8 @@ from time import time
 class DataLoader:
     def __init__(self, data_path: str):
         self.data_path = data_path
+        # Track columns that had nulls for logging and validation
+        self.null_tracking: Dict[str, dict] = {}
         
     def get_feature_columns(self, df: pl.LazyFrame) -> List[str]:
         print("\n📊 Analyzing column structure...")
@@ -20,6 +23,75 @@ class DataLoader:
                       [c for c in all_cols if 'responder' in c and c != Config.TARGET]
         print(f"Found {len(feature_cols)} features and {len(exclude_cols)} columns to exclude")
         return feature_cols, exclude_cols
+    
+    def handle_nulls(self, df: pd.DataFrame, feature_cols: List[str]) -> pd.DataFrame:
+        """
+        Handle nulls using a combination of forward fill, backward fill and null flags.
+        
+        Strategy:
+        1. Create null flags for features with missing values
+        2. Forward fill within each symbol_id group
+        3. Backward fill remaining nulls (handles first rows)
+        
+        Args:
+            df: Input DataFrame
+            feature_cols: List of feature column names
+        
+        Returns:
+            Processed DataFrame with null flags and filled values
+        """
+        print("\n🔍 Processing null values...")
+        
+        # Store original shape for validation
+        original_shape = df.shape
+        
+        # Create null flags for features with missing values
+        null_features = []
+        for col in tqdm(feature_cols, desc="Creating null flags"):
+            null_count = df[col].isnull().sum()
+            if null_count > 0:
+                # Track null statistics for logging
+                self.null_tracking[col] = {
+                    'null_count': null_count,
+                    'null_percentage': (null_count / len(df)) * 100
+                }
+                
+                # Create flag column
+                flag_col = f'{col}_is_null'
+                df[flag_col] = df[col].isnull().astype(np.int8)
+                null_features.append(col)
+                
+                print(f"  {col}: {null_count:,} nulls ({(null_count/len(df))*100:.2f}%)")
+        
+        # First forward fill within each symbol_id group
+        print("\n📈 Forward filling values within symbol groups...")
+        df[feature_cols] = df.groupby('symbol_id')[feature_cols].ffill()
+        
+        # Handle remaining nulls (first rows) with backward fill
+        remaining_nulls = df[feature_cols].isnull().sum()
+        if remaining_nulls.any():
+            print("\n⚠️ Backward filling remaining nulls (first rows)...")
+            df[feature_cols] = df.groupby('symbol_id')[feature_cols].bfill()
+            
+            # Check if any nulls still remain (this would happen if entire column is null for a symbol)
+            final_nulls = df[feature_cols].isnull().sum()
+            if final_nulls.any():
+                print("\n⚠️ Warning: Some columns still have nulls after forward and backward fill.")
+                print("These are likely entire null columns for some symbols.")
+                # Fill these with 0 or another appropriate value
+                df[feature_cols] = df[feature_cols].fillna(0)
+        
+        # Log null handling stats to wandb
+        wandb.log({
+            "features_with_nulls": len(null_features),
+            "null_statistics": self.null_tracking
+        })
+        
+        # Validate processing
+        assert df[feature_cols].isnull().sum().sum() == 0, "Found remaining nulls after processing"
+        assert df.shape[0] == original_shape[0], "Row count changed during processing"
+        
+        return df
     
     def load_and_prepare_data(self) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, np.ndarray, np.ndarray]:
         print("\n🚀 Starting data loading process...")
@@ -52,6 +124,9 @@ class DataLoader:
             pbar.update(1)
         
         print(f"\nLoaded DataFrame shape: {train_df.shape}")
+        
+        # Handle null values before splitting
+        train_df = self.handle_nulls(train_df, feature_cols)
         
         print("\nSplitting data into train/validation sets...")
         result = self._split_data(train_df, exclude_cols)

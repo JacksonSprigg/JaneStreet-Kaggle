@@ -3,7 +3,7 @@ import wandb
 
 from src.data_loading import DataLoader
 from src.models.lgbm import JaneStreetLGBM, CustomLGBMCallback
-from src.utils.logging_utils import init_wandb, log_error
+from src.utils.logging_utils import init_wandb
 
 def main():
 
