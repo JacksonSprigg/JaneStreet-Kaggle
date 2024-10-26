@@ -19,7 +19,7 @@ class JaneStreetLGBM:
     def save_model(self, path: str):
         """Save model to disk using LightGBM's native format"""
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        self.model.save_model(path)  # Changed from joblib.dump()
+        self.model.booster_.save_model(path)  # Changed to use booster_.save_model()
         print(f"✨ Model saved to {path}")
     
     def train(self, X_train, y_train, w_train, X_val, y_val, w_val, callback):
@@ -29,7 +29,6 @@ class JaneStreetLGBM:
         
         self.model.fit(
             X_train, y_train,
-            sample_weight=w_train,
             eval_set=[(X_train, y_train), (X_val, y_val)],
             eval_sample_weight=[w_train, w_val],
             eval_metric=r2_lgb_eval,
@@ -82,7 +81,8 @@ class CustomLGBMCallback:
                 # Save checkpoint if requested
                 if self.save_best:
                     save_path = os.path.join('trained_models', f'backup_best_valr2.joblib')
-                    env.model.save_model(save_path)
+                    env.model.booster_.save_model(save_path)
+                    print("New backup saved.")
             else:
                 improved = "  "
             

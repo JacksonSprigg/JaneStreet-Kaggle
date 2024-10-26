@@ -26,52 +26,48 @@ class DataLoader:
     
     def handle_nulls(self, df: pd.DataFrame, feature_cols: List[str]) -> pd.DataFrame:
         """
-        Handle nulls using a combination of forward fill, backward fill and null flags.
-        
         Strategy:
-        1. Create null flags for features with missing values
+        1. Create null flags for ALL features (not just ones with nulls)
         2. Forward fill within each symbol_id group
         3. Backward fill remaining nulls (handles first rows)
-        
-        Args:
-            df: Input DataFrame
-            feature_cols: List of feature column names
-        
-        Returns:
-            Processed DataFrame with null flags and filled values
         """
         print("\n🔍 Processing null values...")
         
         # Store original shape for validation
         original_shape = df.shape
         
-        # Create null flags for features with missing values
+        # Create null flags for ALL features
         null_features = []
         for col in tqdm(feature_cols, desc="Creating null flags"):
+            # Create flag column regardless of null presence
+            flag_col = f'{col}_is_null'
+            df[flag_col] = df[col].isnull().astype(np.int8)
+            
+            # Still track statistics for logging
             null_count = df[col].isnull().sum()
             if null_count > 0:
-                # Track null statistics for logging
                 self.null_tracking[col] = {
                     'null_count': null_count,
                     'null_percentage': (null_count / len(df)) * 100
                 }
-                
-                # Create flag column
-                flag_col = f'{col}_is_null'
-                df[flag_col] = df[col].isnull().astype(np.int8)
                 null_features.append(col)
-                
                 print(f"  {col}: {null_count:,} nulls ({(null_count/len(df))*100:.2f}%)")
         
         # First forward fill within each symbol_id group
         print("\n📈 Forward filling values within symbol groups...")
+        ffill_start = time()
         df[feature_cols] = df.groupby('symbol_id')[feature_cols].ffill()
+        ffill_time = time() - ffill_start
+        print(f"Forward fill completed in {ffill_time:.2f} seconds")
         
         # Handle remaining nulls (first rows) with backward fill
         remaining_nulls = df[feature_cols].isnull().sum()
         if remaining_nulls.any():
             print("\n⚠️ Backward filling remaining nulls (first rows)...")
+            bfill_start = time()
             df[feature_cols] = df.groupby('symbol_id')[feature_cols].bfill()
+            bfill_time = time() - bfill_start
+            print(f"Backward fill completed in {bfill_time:.2f} seconds")
             
             # Check if any nulls still remain (this would happen if entire column is null for a symbol)
             final_nulls = df[feature_cols].isnull().sum()
@@ -79,13 +75,10 @@ class DataLoader:
                 print("\n⚠️ Warning: Some columns still have nulls after forward and backward fill.")
                 print("These are likely entire null columns for some symbols.")
                 # Fill these with 0 or another appropriate value
+                zero_fill_start = time()
                 df[feature_cols] = df[feature_cols].fillna(0)
-        
-        # Log null handling stats to wandb
-        wandb.log({
-            "features_with_nulls": len(null_features),
-            "null_statistics": self.null_tracking
-        })
+                zero_fill_time = time() - zero_fill_start
+                print(f"Zero fill completed in {zero_fill_time:.2f} seconds")
         
         # Validate processing
         assert df[feature_cols].isnull().sum().sum() == 0, "Found remaining nulls after processing"
@@ -129,7 +122,7 @@ class DataLoader:
         train_df = self.handle_nulls(train_df, feature_cols)
         
         print("\nSplitting data into train/validation sets...")
-        result = self._split_data(train_df, exclude_cols)
+        result = self.split_data(train_df, exclude_cols)
         
         end_time = time()
         print(f"\nData loading completed in {end_time - start_time:.2f} seconds")
@@ -138,7 +131,7 @@ class DataLoader:
         
         return result
     
-    def _split_data(self, df: pd.DataFrame, exclude_cols: List[str]) -> Tuple:
+    def split_data(self, df: pd.DataFrame, exclude_cols: List[str]) -> Tuple:
         X = df.drop(exclude_cols + [Config.TARGET], axis=1)
         y = df[Config.TARGET]
         weights = df['weight'].values
@@ -148,5 +141,5 @@ class DataLoader:
         return (
             X[:train_size], X[train_size:],
             y[:train_size], y[train_size:],
-            weights[:train_size], weights[train_size:]
+            weights[:train_size], weights[train_size:] # Weights here for custom metric evaluation.
         )
