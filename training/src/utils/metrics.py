@@ -12,9 +12,3 @@ def r2_score_weighted(y_true: np.ndarray, y_pred: np.ndarray, sample_weight: np.
     
     r2 = 1 - numerator / denominator                             # 1 - (∑wi(yi-yi^)²)/(∑wiy²i)
     return r2
-
-def r2_lgb_eval(y_true: np.ndarray, y_pred: np.ndarray, sample_weight: np.ndarray = None) -> tuple[str, float, bool]:
-    """LightGBM custom eval metric using competition R² formula.
-    Returns tuple of (metric_name, metric_value, is_higher_better)
-    """
-    return 'r2', r2_score_weighted(y_true, y_pred, sample_weight), True

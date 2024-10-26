@@ -1,13 +1,14 @@
 import os
-import joblib
 import wandb
 import time
+import numpy as np
 
 from lightgbm import LGBMRegressor, early_stopping
 from tqdm import tqdm
+from typing import Tuple, List, Dict
 
 from config import config
-from src.utils.metrics import r2_lgb_eval
+from src.utils.metrics import r2_score_weighted
 
 class JaneStreetLGBM:
     def __init__(self):
@@ -23,26 +24,38 @@ class JaneStreetLGBM:
         print(f"✨ Model saved to {path}")
     
     def train(self, X_train, y_train, w_train, X_val, y_val, w_val, callback):
+        """
+        Train the model using weighted R² evaluation.
+        """
         print("\n🚀 Starting LightGBM training...")
-        
         start_time = time.time()
+
+        # Create eval function with access to weights through closure
+        def weighted_r2_eval(y_true: np.ndarray, y_pred: np.ndarray) -> Tuple[str, float, bool]:
+            """
+            Custom evaluation metric for LightGBM that calculates weighted R².
+            Args:
+                y_true: True values
+                y_pred: Predicted values
+            Returns:
+                Tuple of (metric name, score, is higher better)
+            """
+            # Use array lengths to determine which weight array to use
+            weights = w_train if len(y_true) == len(w_train) else w_val
+            score = r2_score_weighted(y_true, y_pred, weights)
+            return 'weighted_r2', score, True
         
         self.model.fit(
             X_train, y_train,
             eval_set=[(X_train, y_train), (X_val, y_val)],
-            eval_sample_weight=[w_train, w_val],
-            eval_metric=r2_lgb_eval,
+            eval_metric=weighted_r2_eval,
             callbacks=[
                 callback,
-                early_stopping(
-                    stopping_rounds=100,
-                    verbose=True
-                )
+                early_stopping(stopping_rounds=100, verbose=True)
             ]
         )
         
         training_time = time.time() - start_time
-        
         print(f"\n✨ Training completed in {training_time:.2f} seconds")
         print(f"Best iteration: {self.model.best_iteration_}")
         print(f"Best score: {self.model.best_score_}")
@@ -81,7 +94,7 @@ class CustomLGBMCallback:
                 # Save checkpoint if requested
                 if self.save_best:
                     save_path = os.path.join('trained_models', f'backup_best_valr2.joblib')
-                    env.model.booster_.save_model(save_path)
+                    env.model.save_model(save_path)
                     print("New backup saved.")
             else:
                 improved = "  "

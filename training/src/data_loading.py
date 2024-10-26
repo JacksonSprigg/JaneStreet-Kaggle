@@ -134,12 +134,13 @@ class DataLoader:
     def split_data(self, df: pd.DataFrame, exclude_cols: List[str]) -> Tuple:
         X = df.drop(exclude_cols + [Config.TARGET], axis=1)
         y = df[Config.TARGET]
-        weights = df['weight'].values
+
+        weights = df['weight'].to_numpy()
         
         train_size = int(len(X) * Config.TRAIN_VAL_SPLIT)
         
         return (
             X[:train_size], X[train_size:],
             y[:train_size], y[train_size:],
-            weights[:train_size], weights[train_size:] # Weights here for custom metric evaluation.
+            weights[:train_size], weights[train_size:] # Separate weights for evaluation
         )

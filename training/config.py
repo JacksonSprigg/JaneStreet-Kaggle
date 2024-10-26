@@ -16,7 +16,6 @@ class Config:
     # Model Settings
     RANDOM_STATE: int = 42
     LGBM_PARAMS: Dict[str, Any] = field(default_factory=lambda: {
-        # Removed "device": "gpu" parameter
         "objective": "regression_l2",
         "n_estimators": 1000,
         "max_depth": 10,
@@ -26,7 +25,7 @@ class Config:
         "reg_lambda": 1.25,
         "reg_alpha": 0.001,
         "verbosity": -1,
-        "n_jobs": -1  # Added to use all CPU cores
+        "n_jobs": -1  # Added to use all CPU cores # Removed "device": "gpu" parameter
     })
 
 # Create a config instance
