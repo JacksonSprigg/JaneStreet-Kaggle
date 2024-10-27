@@ -19,12 +19,10 @@ def main():
     
     # Initialize and train model
     model = JaneStreetLGBM()
-    callback = CustomLGBMCallback(save_best=True)
     
     model.train(
         X_train, y_train, w_train,
-        X_val, y_val, w_val,
-        callback
+        X_val, y_val, w_val
     )
     
     wandb.finish()

@@ -10,7 +10,7 @@ class Config:
     
     # Data Settings
     TARGET: str = "responder_6"
-    OFFLINE_START_DATE: int = 500
+    OFFLINE_START_DATE: int = 1598
     TRAIN_VAL_SPLIT: float = 0.8
     
     # Model Settings

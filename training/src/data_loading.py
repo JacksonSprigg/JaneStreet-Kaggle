@@ -121,6 +121,21 @@ class DataLoader:
         # Handle null values before splitting
         train_df = self.handle_nulls(train_df, feature_cols)
         
+        # TODO: DEBUG IS HERE
+        # last_time = train_df[train_df['date_id'] == 1680]['time_id'].max()
+        # last_data = train_df[(train_df['date_id'] == 1680) & (train_df['time_id'] == last_time)]
+        
+        # print("\nTraining data - Last moment of date 1680:")
+        # print("last time")
+        # print(last_time)
+        # for symbol, group in last_data.groupby('symbol_id'):
+        #     features = [
+        #         f"({symbol}, 'feature_{i:02d}'): {group[f'feature_{i:02d}'].iloc[0]:.6f} (null: {group[f'feature_{i:02d}_is_null'].iloc[0]})"
+        #         for i in range(79)
+        #     ]
+        #     print(", ".join(features))
+
+                
         print("\nSplitting data into train/validation sets...")
         result = self.split_data(train_df, exclude_cols)
         
@@ -132,15 +147,63 @@ class DataLoader:
         return result
     
     def split_data(self, df: pd.DataFrame, exclude_cols: List[str]) -> Tuple:
-        X = df.drop(exclude_cols + [Config.TARGET], axis=1)
-        y = df[Config.TARGET]
-
-        weights = df['weight'].to_numpy()
+        # Get unique dates before splitting to understand our ranges
+        # Get unique dates before splitting to understand our ranges
+        all_dates = df['date_id'].unique()
         
-        train_size = int(len(X) * Config.TRAIN_VAL_SPLIT)
+        # Calculate target split date based on percentage
+        target_split_idx = int(len(all_dates) * Config.TRAIN_VAL_SPLIT)
+        split_date = all_dates[target_split_idx]
+        
+        # Get the actual train_size that aligns with date boundaries
+        train_size = df[df['date_id'] < split_date].shape[0]
+
+        # TODO: DEBUG, Get the first 10 rows of the validation period for debugging
+        val_start_date = df.iloc[train_size]['date_id']
+        first_val_indices = df[df['date_id'] == val_start_date].head(10).index.values
+        
+        # Find the split date
+        split_date = df.iloc[train_size]['date_id']
+        
+        print("\n📅 Date ranges for train/validation splits:")
+        print(f"Train dates     : {min(all_dates)} to {split_date-1}")
+        print(f"Validation dates: {split_date} to {max(all_dates)}")
+        print(f"Total unique dates: {len(all_dates)}")
+        
+        # Calculate some basic statistics
+        train_data = df[df['date_id'] < split_date]
+        val_data = df[df['date_id'] >= split_date]
+
+        train_dates = train_data['date_id'].unique()
+        val_dates = val_data['date_id'].unique()
+
+        print(f"\nData ranges:")
+        print(f"Training  : {len(train_dates)} days")
+        print(f"           date_id range: {train_data['date_id'].min()} to {train_data['date_id'].max()}")
+        print(f"           time_id range: {train_data['time_id'].min()} to {train_data['time_id'].max()}")
+        print(f"Validation: {len(val_dates)} days")
+        print(f"           date_id range: {val_data['date_id'].min()} to {val_data['date_id'].max()}")
+        print(f"           time_id range: {val_data['time_id'].min()} to {val_data['time_id'].max()}")
+        
+        # Original split logic
+        X = df.drop(exclude_cols + [Config.TARGET], axis=1).to_numpy()
+        y = df[Config.TARGET].to_numpy()
+        weights = df['weight'].to_numpy()
+
+        # TODO: DEBUG, Print validation values we want to track
+        # In split_data:
+        # print("\nLast 20 validation rows values:")
+        # last_val_indices = df[df['date_id'] == val_dates[-1]].tail(20).index.values
+        # for idx in last_val_indices:
+        #     print(f"True: {y[idx]:.6f}, Weight: {weights[idx]:.6f}")
+
+        # print("\nLast 20 validation rows values (direct from split):")
+        # for i in range(20):
+        #     idx = len(y) - 20 + i  # Get last 20 indices
+        #     print(f"True: {y[idx]:.6f}, Weight: {weights[idx]:.6f}")
         
         return (
             X[:train_size], X[train_size:],
             y[:train_size], y[train_size:],
-            weights[:train_size], weights[train_size:] # Separate weights for evaluation
+            weights[:train_size], weights[train_size:]
         )
