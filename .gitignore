@@ -12,9 +12,14 @@ wandb/
 *.pth
 *.joblib
 *.model
+*.txt
+*.json
 
 # Python cache files
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# Slurm
+*.out

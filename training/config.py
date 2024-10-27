@@ -10,8 +10,8 @@ class Config:
     
     # Data Settings
     TARGET: str = "responder_6"
-    OFFLINE_START_DATE: int = 1598
-    TRAIN_VAL_SPLIT: float = 0.8
+    OFFLINE_START_DATE: int = 500
+    SPLIT_DATE_ID: int = 1649  # New parameter for date-based split
     
     # Model Settings
     RANDOM_STATE: int = 42
@@ -25,7 +25,12 @@ class Config:
         "reg_lambda": 1.25,
         "reg_alpha": 0.001,
         "verbosity": -1,
-        "n_jobs": -1  # Added to use all CPU cores # Removed "device": "gpu" parameter
+        #"n_jobs": -1  # Added to use all CPU cores
+
+        # GPU settings
+        "device": "gpu",
+        # Use multiple GPUs
+        "num_gpu": 2
     })
 
 # Create a config instance

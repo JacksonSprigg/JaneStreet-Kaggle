@@ -1,10 +1,10 @@
 import os
+import wandb
 import polars as pl
 import pandas as pd
-import wandb
 import numpy as np
 
-from typing import Tuple, List, Dict
+from typing import Tuple, List
 from config import Config
 from tqdm import tqdm
 from time import time
@@ -12,8 +12,6 @@ from time import time
 class DataLoader:
     def __init__(self, data_path: str):
         self.data_path = data_path
-        # Track columns that had nulls for logging and validation
-        self.null_tracking: Dict[str, dict] = {}
         
     def get_feature_columns(self, df: pl.LazyFrame) -> List[str]:
         print("\n📊 Analyzing column structure...")
@@ -46,10 +44,6 @@ class DataLoader:
             # Still track statistics for logging
             null_count = df[col].isnull().sum()
             if null_count > 0:
-                self.null_tracking[col] = {
-                    'null_count': null_count,
-                    'null_percentage': (null_count / len(df)) * 100
-                }
                 null_features.append(col)
                 print(f"  {col}: {null_count:,} nulls ({(null_count/len(df))*100:.2f}%)")
         
@@ -120,22 +114,7 @@ class DataLoader:
         
         # Handle null values before splitting
         train_df = self.handle_nulls(train_df, feature_cols)
-        
-        # TODO: DEBUG IS HERE
-        # last_time = train_df[train_df['date_id'] == 1680]['time_id'].max()
-        # last_data = train_df[(train_df['date_id'] == 1680) & (train_df['time_id'] == last_time)]
-        
-        # print("\nTraining data - Last moment of date 1680:")
-        # print("last time")
-        # print(last_time)
-        # for symbol, group in last_data.groupby('symbol_id'):
-        #     features = [
-        #         f"({symbol}, 'feature_{i:02d}'): {group[f'feature_{i:02d}'].iloc[0]:.6f} (null: {group[f'feature_{i:02d}_is_null'].iloc[0]})"
-        #         for i in range(79)
-        #     ]
-        #     print(", ".join(features))
-
-                
+          
         print("\nSplitting data into train/validation sets...")
         result = self.split_data(train_df, exclude_cols)
         
@@ -145,25 +124,20 @@ class DataLoader:
         print(f"Validation set shape: {result[1].shape}\n")
         
         return result
-    
+
     def split_data(self, df: pd.DataFrame, exclude_cols: List[str]) -> Tuple:
-        # Get unique dates before splitting to understand our ranges
         # Get unique dates before splitting to understand our ranges
         all_dates = df['date_id'].unique()
         
-        # Calculate target split date based on percentage
-        target_split_idx = int(len(all_dates) * Config.TRAIN_VAL_SPLIT)
-        split_date = all_dates[target_split_idx]
+        # Use the configured split date
+        split_date = Config.SPLIT_DATE_ID
         
-        # Get the actual train_size that aligns with date boundaries
-        train_size = df[df['date_id'] < split_date].shape[0]
-
-        # TODO: DEBUG, Get the first 10 rows of the validation period for debugging
-        val_start_date = df.iloc[train_size]['date_id']
-        first_val_indices = df[df['date_id'] == val_start_date].head(10).index.values
+        # Get the data split
+        train_data = df[df['date_id'] < split_date]
+        val_data = df[df['date_id'] >= split_date]
         
-        # Find the split date
-        split_date = df.iloc[train_size]['date_id']
+        # Calculate train size for array splitting
+        train_size = train_data.shape[0]
         
         print("\n📅 Date ranges for train/validation splits:")
         print(f"Train dates     : {min(all_dates)} to {split_date-1}")
@@ -171,36 +145,19 @@ class DataLoader:
         print(f"Total unique dates: {len(all_dates)}")
         
         # Calculate some basic statistics
-        train_data = df[df['date_id'] < split_date]
-        val_data = df[df['date_id'] >= split_date]
-
         train_dates = train_data['date_id'].unique()
         val_dates = val_data['date_id'].unique()
-
         print(f"\nData ranges:")
         print(f"Training  : {len(train_dates)} days")
         print(f"           date_id range: {train_data['date_id'].min()} to {train_data['date_id'].max()}")
-        print(f"           time_id range: {train_data['time_id'].min()} to {train_data['time_id'].max()}")
         print(f"Validation: {len(val_dates)} days")
         print(f"           date_id range: {val_data['date_id'].min()} to {val_data['date_id'].max()}")
-        print(f"           time_id range: {val_data['time_id'].min()} to {val_data['time_id'].max()}")
         
-        # Original split logic
+        # Split the data
+        print("Columns in X:", df.drop(exclude_cols + [Config.TARGET], axis=1).columns)
         X = df.drop(exclude_cols + [Config.TARGET], axis=1).to_numpy()
         y = df[Config.TARGET].to_numpy()
         weights = df['weight'].to_numpy()
-
-        # TODO: DEBUG, Print validation values we want to track
-        # In split_data:
-        # print("\nLast 20 validation rows values:")
-        # last_val_indices = df[df['date_id'] == val_dates[-1]].tail(20).index.values
-        # for idx in last_val_indices:
-        #     print(f"True: {y[idx]:.6f}, Weight: {weights[idx]:.6f}")
-
-        # print("\nLast 20 validation rows values (direct from split):")
-        # for i in range(20):
-        #     idx = len(y) - 20 + i  # Get last 20 indices
-        #     print(f"True: {y[idx]:.6f}, Weight: {weights[idx]:.6f}")
         
         return (
             X[:train_size], X[train_size:],
