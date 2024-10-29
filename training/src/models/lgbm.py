@@ -87,7 +87,6 @@ class JaneStreetLGBM:
 
         # Keep track of training data length for reliable comparison
         train_length = len(y_train)
-
         def weighted_r2_eval(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[str, float, bool]:
             # Use exact length match of training data to determine which set we're evaluating
             is_training = len(y_true) == train_length

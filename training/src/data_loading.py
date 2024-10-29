@@ -154,7 +154,6 @@ class DataLoader:
         print(f"           date_id range: {val_data['date_id'].min()} to {val_data['date_id'].max()}")
         
         # Split the data
-        print("Columns in X:", df.drop(exclude_cols + [Config.TARGET], axis=1).columns)
         X = df.drop(exclude_cols + [Config.TARGET], axis=1).to_numpy()
         y = df[Config.TARGET].to_numpy()
         weights = df['weight'].to_numpy()
