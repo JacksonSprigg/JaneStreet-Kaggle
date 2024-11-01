@@ -5,12 +5,12 @@ from typing import Dict, Any
 class Config:
     # Wandb Settings
     PROJECT_NAME: str = "jane-street-market"
-    RUN_NAME: str = "lgbm_last_150_days_val_20"
+    RUN_NAME: str = "lgbm_last_1000_days_val_20"
     WANDB_SAVE_DIR: str = "trained_models/wandb"
     
     # Data Settings
     TARGET: str = "responder_6"
-    OFFLINE_START_DATE: int = (1698 - 750)
+    OFFLINE_START_DATE: int = (1698 - 1000)
     SPLIT_DATE_ID: int = (1698 - 20)  # Note that there are 1698 days
     
     # Model Settings
