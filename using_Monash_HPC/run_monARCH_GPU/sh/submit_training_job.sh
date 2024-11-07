@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=ML_Training
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:A100:2
+#SBATCH --gres=gpu:A40:2
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128G

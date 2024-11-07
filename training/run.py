@@ -1,8 +1,7 @@
-import os
 import wandb
 
 from src.data_loading import DataLoader
-from src.models.lgbm import JaneStreetLGBM, CustomLGBMCallback
+from src.models.lgbm import JaneStreetLGBM
 from src.utils.logging_utils import init_wandb
 
 def main():
@@ -11,7 +10,7 @@ def main():
     init_wandb()
         
     # Setup data path
-    data_path = os.path.join(os.path.dirname(os.getcwd()), "jane-street-real-time-market-data-forecasting")
+    data_path = "/home/jsprigg/ys68/JaneStreet-Kaggle/jane-street-real-time-market-data-forecasting"
     
     # Load data
     data_loader = DataLoader(data_path)

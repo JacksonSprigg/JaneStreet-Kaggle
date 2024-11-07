@@ -116,8 +116,10 @@ class DataLoader:
         train_df = self.handle_nulls(train_df, feature_cols)
           
         print("\nSplitting data into train/validation sets...")
-        result = self.split_data(train_df, exclude_cols)
-        
+        #result = self.split_data(train_df, exclude_cols)
+        #result = self.split_data_random(train_df, exclude_cols)
+        result = self.split_data_random_consecutive(train_df, exclude_cols)
+
         end_time = time()
         print(f"\nData loading completed in {end_time - start_time:.2f} seconds")
         print(f"Train set shape: {result[0].shape}")
@@ -162,4 +164,109 @@ class DataLoader:
             X[:train_size], X[train_size:],
             y[:train_size], y[train_size:],
             weights[:train_size], weights[train_size:]
+        )
+    
+    def split_data_random(self, df: pd.DataFrame, exclude_cols: List[str]) -> Tuple:
+        """
+        Randomly splits data into train and validation sets.
+        Uses stratification by date_id to ensure even temporal distribution.
+        """
+        print("\n🎲 Performing random train/validation split...")
+        
+        # Calculate sizes
+        total_samples = len(df)
+        val_size = int(total_samples * 0.01)  # 10% validation
+        
+        # Create random indices but stratify by date_id to ensure temporal coverage
+        from sklearn.model_selection import train_test_split
+        
+        train_idx, val_idx = train_test_split(
+            np.arange(total_samples),
+            test_size=val_size,
+            random_state=Config.RANDOM_STATE,
+            stratify=df['date_id']  # Stratify by date to ensure temporal coverage
+        )
+        
+        # Split the data using the indices
+        train_data = df.iloc[train_idx]
+        val_data = df.iloc[val_idx]
+        
+        # Logging information
+        print("\n📊 Split Statistics:")
+        print(f"Total samples: {total_samples:,}")
+        print(f"Training samples: {len(train_idx):,} ({len(train_idx)/total_samples*100:.1f}%)")
+        print(f"Validation samples: {len(val_idx):,} ({len(val_idx)/total_samples*100:.1f}%)")
+        
+        # Date coverage statistics
+        train_dates = train_data['date_id'].unique()
+        val_dates = val_data['date_id'].unique()
+        all_dates = df['date_id'].unique()
+        
+        print("\n📅 Date Coverage:")
+        print(f"Total unique dates: {len(all_dates)}")
+        print(f"Dates in training: {len(train_dates)} ({len(train_dates)/len(all_dates)*100:.1f}%)")
+        print(f"Dates in validation: {len(val_dates)} ({len(val_dates)/len(all_dates)*100:.1f}%)")
+        
+        # Prepare numpy arrays for model
+        X = df.drop(exclude_cols + [Config.TARGET], axis=1).to_numpy()
+        y = df[Config.TARGET].to_numpy()
+        weights = df['weight'].to_numpy()
+        
+        return (
+            X[train_idx], X[val_idx],
+            y[train_idx], y[val_idx],
+            weights[train_idx], weights[val_idx]
+        )
+    
+    def split_data_random_consecutive(self, df: pd.DataFrame, exclude_cols: List[str]) -> Tuple:
+        """
+        Splits data by randomly selecting 24 sets of 5 consecutive days for validation.
+        """
+        print("\n🎲 Performing random consecutive-day split...")
+        
+        # Get unique dates
+        all_dates = sorted(df['date_id'].unique())
+        
+        # Find valid starting positions (need 4 more days after each)
+        valid_starts = all_dates[:-30]  # Exclude last 4 days as they can't form a complete 5-day sequence
+        
+        # Randomly select 24 starting positions
+        np.random.seed(Config.RANDOM_STATE)
+        start_dates = np.random.choice(valid_starts, size=24, replace=False)
+        
+        # Create list of all validation dates (5 consecutive days for each start)
+        val_dates = []
+        for start in start_dates:
+            start_idx = np.where(all_dates == start)[0][0]
+            val_dates.extend(all_dates[start_idx:start_idx + 5])
+        
+        # Create masks for splitting
+        val_mask = df['date_id'].isin(val_dates)
+        train_mask = ~val_mask
+        
+        # Split the data
+        train_data = df[train_mask]
+        val_data = df[val_mask]
+        
+        # Logging information
+        print("\n📊 Split Statistics:")
+        print(f"Total samples: {len(df):,}")
+        print(f"Training samples: {len(train_data):,} ({len(train_data)/len(df)*100:.1f}%)")
+        print(f"Validation samples: {len(val_data):,} ({len(val_data)/len(df)*100:.1f}%)")
+        
+        print("\n📅 Date Coverage:")
+        print(f"Total unique dates: {len(all_dates)}")
+        print(f"Training days: {len(all_dates) - len(val_dates)}")
+        print(f"Validation days: {len(val_dates)} (24 sets of 5 consecutive days)")
+        print(f"Number of validation sequences: {len(start_dates)}")
+        
+        # Prepare numpy arrays for model
+        X = df.drop(exclude_cols + [Config.TARGET], axis=1).to_numpy()
+        y = df[Config.TARGET].to_numpy()
+        weights = df['weight'].to_numpy()
+        
+        return (
+            X[train_mask], X[val_mask],
+            y[train_mask], y[val_mask],
+            weights[train_mask], weights[val_mask]
         )
