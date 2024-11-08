@@ -2,15 +2,19 @@ import os
 import json
 import time
 from datetime import datetime
-from typing import Optional, Dict, Any
-
+from tqdm import tqdm
 import wandb
 import numpy as np
-from lightgbm import LGBMRegressor, Booster, early_stopping
-from tqdm import tqdm
+from typing import Optional, Dict, Any
 
-from config import config
+from lightgbm import LGBMRegressor, Booster
+
 from src.utils.metrics import r2_score_weighted
+
+from config import EXPERIMENT, VALIDATION, LGBM_PARAMS
+
+
+# TODO: CHange best model back
 
 class ModelManager:
     def __init__(self, base_dir: str = 'trained_models'):
@@ -75,13 +79,17 @@ class ModelManager:
 class JaneStreetLGBM:
     def __init__(self):
         self.model = LGBMRegressor(
-            **config.LGBM_PARAMS,
+            **LGBM_PARAMS,
             disable_default_eval_metric=True
         )
         self.model_manager = ModelManager()
+        self.data_loader = None  
+
     
-    def train(self, X_train, y_train, w_train, X_val, y_val, w_val):
+    def train(self, X_train, y_train, w_train, X_val, y_val, w_val, data_loader):
         """Train the model using weighted R² evaluation."""
+        self.data_loader = data_loader  # Store the data_loader instance
+
         print("\n🚀 Starting LightGBM training...")
         start_time = time.time()
 
@@ -102,25 +110,28 @@ class JaneStreetLGBM:
             eval_set=[(X_train, y_train), (X_val, y_val)],
             eval_metric=weighted_r2_eval,
             callbacks=[
-                callback,
-                early_stopping(stopping_rounds=100, verbose=True)
+                callback
             ]
         )
         
         training_time = time.time() - start_time
         print(f"\n✨ Training completed in {training_time:.2f} seconds")
         
-        # Save final model with metadata
         metadata = {
             'best_iteration': self.model.best_iteration_,
             'best_score': self.model.best_score_,
             'training_time': training_time,
             'model_params': self.model.get_params(),
             'wandb_run_id': wandb.run.id if wandb.run else None,
-            # Handle feature importance without column names
             'feature_importance': {
                 f'feature_{i}': importance 
                 for i, importance in enumerate(self.model.feature_importances_)
+            },
+            'experiment_config': {
+                'experiment': EXPERIMENT,
+                'validation': VALIDATION,
+                'model_params': LGBM_PARAMS,
+                'validation_details': data_loader.val_metadata  # Add this line
             }
         }
         
@@ -132,7 +143,7 @@ class JaneStreetLGBM:
         )
 
 class CustomLGBMCallback:
-    def __init__(self, model: JaneStreetLGBM, logging_interval: int = 10):
+    def __init__(self, model: JaneStreetLGBM, logging_interval: int = LGBM_PARAMS['logging_interval']):
         self.logging_interval = logging_interval
         self.start_time = time.time()
         self.best_score = float('-inf')
@@ -153,7 +164,7 @@ class CustomLGBMCallback:
             train_r2 = env.evaluation_result_list[1][2]
             val_r2 = env.evaluation_result_list[3][2]
             
-            if val_r2 > self.best_score:
+            if val_r2 > -0.99999: #self.best_score: # TODO: here
                 self.best_score = val_r2
                 improved = "🔥"
                 

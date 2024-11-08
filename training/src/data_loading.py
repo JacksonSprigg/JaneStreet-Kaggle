@@ -1,272 +1,213 @@
 import os
-import wandb
 import polars as pl
-import pandas as pd
 import numpy as np
 
 from typing import Tuple, List
-from config import Config
-from tqdm import tqdm
+from config import EXPERIMENT, VALIDATION
 from time import time
 
 class DataLoader:
     def __init__(self, data_path: str):
         self.data_path = data_path
+        self.val_metadata = None
         
-    def get_feature_columns(self, df: pl.LazyFrame) -> List[str]:
+    def get_feature_columns(self, df: pl.LazyFrame) -> Tuple[list, list]:
+        """Extract feature columns and columns to exclude"""
         print("\n📊 Analyzing column structure...")
         all_cols = df.collect_schema().names()
         feature_cols = [c for c in all_cols if c.startswith('feature_')]
         exclude_cols = ['id', 'date_id', 'time_id', 'partition_id'] + \
-                      [c for c in all_cols if 'responder' in c and c != Config.TARGET]
+                      [c for c in all_cols if 'responder' in c and c != EXPERIMENT['target']]
         print(f"Found {len(feature_cols)} features and {len(exclude_cols)} columns to exclude")
         return feature_cols, exclude_cols
     
-    def handle_nulls(self, df: pd.DataFrame, feature_cols: List[str]) -> pd.DataFrame:
-        """
-        Strategy:
-        1. Create null flags for ALL features (not just ones with nulls)
-        2. Forward fill within each symbol_id group
-        3. Backward fill remaining nulls (handles first rows)
-        """
-        print("\n🔍 Processing null values...")
+    def _prepare_arrays(self, df: pl.DataFrame, mask: pl.Series, exclude_cols: List[str]) -> Tuple:
+        """Convert filtered Polars DataFrame to numpy arrays for model"""
+        filtered = df.filter(mask)
         
-        # Store original shape for validation
-        original_shape = df.shape
+        # Get features (everything not in exclude_cols or target)
+        X = filtered.select([
+            col for col in filtered.columns 
+            if col not in exclude_cols + [EXPERIMENT['target']]
+        ]).to_numpy()
         
-        # Create null flags for ALL features
-        null_features = []
-        for col in tqdm(feature_cols, desc="Creating null flags"):
-            # Create flag column regardless of null presence
-            flag_col = f'{col}_is_null'
-            df[flag_col] = df[col].isnull().astype(np.int8)
-            
-            # Still track statistics for logging
-            null_count = df[col].isnull().sum()
-            if null_count > 0:
-                null_features.append(col)
-                print(f"  {col}: {null_count:,} nulls ({(null_count/len(df))*100:.2f}%)")
+        # Get target and weights
+        y = filtered.select(EXPERIMENT['target']).to_numpy().ravel()
+        weights = filtered.select('weight').to_numpy().ravel()
         
-        # First forward fill within each symbol_id group
-        print("\n📈 Forward filling values within symbol groups...")
-        ffill_start = time()
-        df[feature_cols] = df.groupby('symbol_id')[feature_cols].ffill()
-        ffill_time = time() - ffill_start
-        print(f"Forward fill completed in {ffill_time:.2f} seconds")
+        return X, y, weights
+
+    def split_data_time(self, df: pl.DataFrame, exclude_cols: List[str]) -> Tuple:
+        """Temporal split with optional gap between train and validation"""
+        print("\n📈 Performing temporal split...")
         
-        # Handle remaining nulls (first rows) with backward fill
-        remaining_nulls = df[feature_cols].isnull().sum()
-        if remaining_nulls.any():
-            print("\n⚠️ Backward filling remaining nulls (first rows)...")
-            bfill_start = time()
-            df[feature_cols] = df.groupby('symbol_id')[feature_cols].bfill()
-            bfill_time = time() - bfill_start
-            print(f"Backward fill completed in {bfill_time:.2f} seconds")
-            
-            # Check if any nulls still remain (this would happen if entire column is null for a symbol)
-            final_nulls = df[feature_cols].isnull().sum()
-            if final_nulls.any():
-                print("\n⚠️ Warning: Some columns still have nulls after forward and backward fill.")
-                print("These are likely entire null columns for some symbols.")
-                # Fill these with 0 or another appropriate value
-                zero_fill_start = time()
-                df[feature_cols] = df[feature_cols].fillna(0)
-                zero_fill_time = time() - zero_fill_start
-                print(f"Zero fill completed in {zero_fill_time:.2f} seconds")
+        # Get unique dates for logging
+        all_dates = df.get_column('date_id').unique().sort()
+        time_config = VALIDATION['time']
         
-        # Validate processing
-        assert df[feature_cols].isnull().sum().sum() == 0, "Found remaining nulls after processing"
-        assert df.shape[0] == original_shape[0], "Row count changed during processing"
+        # Create masks for splitting
+        train_mask = pl.col('date_id') <= time_config['train_date_stop']
+        val_mask = (pl.col('date_id') >= time_config['val_date_start']) & \
+                (pl.col('date_id') <= time_config['val_date_stop'])
         
-        return df
+        # Get data splits
+        train_dates = df.filter(train_mask).get_column('date_id').unique().sort()
+        val_dates = df.filter(val_mask).get_column('date_id').unique().sort()
+        
+        print("\n📅 Date ranges for train/validation splits:")
+        print(f"Train dates     : {min(train_dates)} to {max(train_dates)}")
+        if time_config['val_date_start'] - time_config['train_date_stop'] > 1:
+            print(f"Gap            : {time_config['train_date_stop'] + 1} to {time_config['val_date_start'] - 1}")
+        print(f"Validation dates: {min(val_dates)} to {max(val_dates)}")
+        print(f"Total unique dates: {len(all_dates)}")
+        
+        print(f"\nData ranges:")
+        print(f"Training  : {len(train_dates)} days")
+        print(f"           date_id range: {train_dates.min()} to {train_dates.max()}")
+        print(f"Validation: {len(val_dates)} days")
+        print(f"           date_id range: {val_dates.min()} to {val_dates.max()}")
+        
+        if time_config['val_date_start'] - time_config['train_date_stop'] > 1:
+            print(f"Gap size : {time_config['val_date_start'] - time_config['train_date_stop'] - 1} days")
+        
+        # Store metadata
+        self.val_metadata = {
+            'train_dates': train_dates.to_list(),
+            'validation_dates': val_dates.to_list(),
+            'train_date_stop': time_config['train_date_stop'],
+            'val_date_start': time_config['val_date_start'],
+            'val_date_stop': time_config['val_date_stop']
+        }
+        
+        # Convert to numpy arrays
+        X_train, y_train, w_train = self._prepare_arrays(df, train_mask, exclude_cols)
+        X_val, y_val, w_val = self._prepare_arrays(df, val_mask, exclude_cols)
+        
+        return X_train, X_val, y_train, y_val, w_train, w_val
     
-    def load_and_prepare_data(self) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, np.ndarray, np.ndarray]:
+    def split_data_consecutive(self, df: pl.DataFrame, exclude_cols: List[str]) -> Tuple:
+        """Random consecutive days with purge windows that can overlap each other"""
+        print("\n🎲 Performing consecutive-day split with purge windows...")
+        
+        consecutive_config = VALIDATION['consecutive']
+        all_dates = df.get_column('date_id').unique().sort().to_list()
+        total_days = len(all_dates)
+        
+        # Don't restrict valid starts - any day could be a valid start
+        valid_starts = all_dates[:-consecutive_config['sequence_length']]  # Only ensure enough days for sequence
+        start_dates = []
+        val_and_purge_days = set()  # Track days that can't be used for new validation periods
+        validation_only_days = set() # Track just validation days
+        
+        while len(start_dates) < consecutive_config['n_sequences'] and len(valid_starts) > 0:
+            candidate = np.random.choice(valid_starts)
+            candidate_idx = all_dates.index(candidate)
+            
+            # Check if validation period would overlap with any protected days
+            validation_range = all_dates[candidate_idx:candidate_idx + consecutive_config['sequence_length']]
+            if not any(day in val_and_purge_days for day in validation_range):
+                start_dates.append(candidate)
+                
+                # Add validation days to both sets
+                validation_only_days.update(validation_range)
+                val_and_purge_days.update(validation_range)
+                
+                # Calculate and add purge days only to val_and_purge_days
+                purge_start_idx = max(0, candidate_idx - consecutive_config['purge_before'])
+                purge_end_idx = min(total_days - 1, 
+                                candidate_idx + consecutive_config['sequence_length'] + 
+                                (consecutive_config['purge_after'] - consecutive_config['sequence_length']))
+                
+                # Add purge windows to protected days
+                val_and_purge_days.update(all_dates[purge_start_idx:candidate_idx])
+                val_and_purge_days.update(all_dates[
+                    candidate_idx + consecutive_config['sequence_length']:purge_end_idx + 1
+                ])
+                
+                # Only remove validation days from valid starts
+                valid_starts = [d for d in valid_starts if d not in validation_range]
+        
+        if len(start_dates) < consecutive_config['n_sequences']:
+            print(f"\n⚠️ Warning: Could only find {len(start_dates)} non-overlapping sequences")
+        
+        # Create validation and purge dates
+        val_dates = list(validation_only_days)
+        purge_dates = [d for d in val_and_purge_days if d not in validation_only_days]
+        
+        # Create masks for splitting
+        val_mask = pl.col('date_id').is_in(val_dates)
+        purge_mask = pl.col('date_id').is_in(purge_dates)
+        train_mask = ~(val_mask | purge_mask)
+        
+        # Get stats for printing
+        n_train = df.filter(train_mask).height
+        n_val = df.filter(val_mask).height
+        n_purge = df.filter(purge_mask).height
+        total = df.height
+        
+        print("\n📊 Split Statistics:")
+        print(f"Total samples: {total:,}")
+        print(f"Training samples: {n_train:,} ({n_train/total*100:.1f}%)")
+        print(f"Validation samples: {n_val:,} ({n_val/total*100:.1f}%)")
+        print(f"Purged samples: {n_purge:,} ({n_purge/total*100:.1f}%)")
+        
+        print("\n📅 Date Coverage:")
+        print(f"Training days: {len(df.filter(train_mask).get_column('date_id').unique())}")
+        print(f"Validation days: {len(set(val_dates))} "
+            f"({len(start_dates)} sets of {consecutive_config['sequence_length']} days)")
+        print(f"Purge days: {len(set(purge_dates))}")
+        
+        # Store metadata
+        self.val_metadata = {
+            'validation_dates': sorted(val_dates),
+            'purge_dates': sorted(purge_dates),
+            'n_sequences_found': len(start_dates)
+        }
+        
+        # Convert to numpy arrays
+        X_train, y_train, w_train = self._prepare_arrays(df, train_mask, exclude_cols)
+        X_val, y_val, w_val = self._prepare_arrays(df, val_mask, exclude_cols)
+        
+        return X_train, X_val, y_train, y_val, w_train, w_val
+
+    def load_and_prepare_data(self) -> Tuple:
+        """Load, filter, and split the data"""
         print("\n🚀 Starting data loading process...")
         start_time = time()
-        
-        wandb.log({"data_loading_start": True})
-        
-        print("Reading parquet file...")
-        train = pl.scan_parquet(os.path.join(self.data_path, "train.parquet")).\
-            select(
-                pl.int_range(pl.len(), dtype=pl.UInt64).alias("id"),
-                pl.all(),
-            )
-        
+                
+        # Load data and get column info
+        print("Reading parquet file(s)...")
+        train = pl.scan_parquet(self.data_path).select(
+            pl.int_range(pl.len(), dtype=pl.UInt64).alias("id") if 'id' not in pl.scan_parquet(self.data_path).columns else pl.col("id"),
+            pl.all().exclude("id"),
+        )        
+
         feature_cols, exclude_cols = self.get_feature_columns(train)
         
-        # Log feature information
-        wandb.config.update({
-            "num_features": len(feature_cols),
-            "target": Config.TARGET,
-            "offline_start_date": Config.OFFLINE_START_DATE
-        })
+        print(f"\nFiltering data after day {EXPERIMENT['start_after_day']}...")
+        train_data = train.filter(pl.col("date_id") > EXPERIMENT['start_after_day'])
         
-        print(f"\nFiltering data after date {Config.OFFLINE_START_DATE}...")
-        train_data = train.filter(pl.col("date_id") > Config.OFFLINE_START_DATE)
-        
-        print("Converting to pandas DataFrame...")
-        with tqdm(total=1, desc="Loading data") as pbar:
-            train_df = train_data.collect().to_pandas()
-            pbar.update(1)
+        # Collect to DataFrame but stay in Polars
+        print("Collecting DataFrame...")
+        start_time_df_collect = time()
+        train_df = train_data.collect(parallel=True)
+        print(f"Collection completed in {time() - start_time_df_collect:.2f} seconds")
         
         print(f"\nLoaded DataFrame shape: {train_df.shape}")
         
-        # Handle null values before splitting
-        train_df = self.handle_nulls(train_df, feature_cols)
-          
+        # Split data based on configured split type
         print("\nSplitting data into train/validation sets...")
-        #result = self.split_data(train_df, exclude_cols)
-        #result = self.split_data_random(train_df, exclude_cols)
-        result = self.split_data_random_consecutive(train_df, exclude_cols)
-
+        split_type = EXPERIMENT['split_type']
+        if split_type == 'time':
+            result = self.split_data_time(train_df, exclude_cols)
+        elif split_type == 'consecutive':
+            result = self.split_data_consecutive(train_df, exclude_cols)
+        else:
+            raise ValueError(f"Unknown split type: {split_type}")
+        
         end_time = time()
         print(f"\nData loading completed in {end_time - start_time:.2f} seconds")
         print(f"Train set shape: {result[0].shape}")
         print(f"Validation set shape: {result[1].shape}\n")
         
         return result
-
-    def split_data(self, df: pd.DataFrame, exclude_cols: List[str]) -> Tuple:
-        # Get unique dates before splitting to understand our ranges
-        all_dates = df['date_id'].unique()
-        
-        # Use the configured split date
-        split_date = Config.SPLIT_DATE_ID
-        
-        # Get the data split
-        train_data = df[df['date_id'] < split_date]
-        val_data = df[df['date_id'] >= split_date]
-        
-        # Calculate train size for array splitting
-        train_size = train_data.shape[0]
-        
-        print("\n📅 Date ranges for train/validation splits:")
-        print(f"Train dates     : {min(all_dates)} to {split_date-1}")
-        print(f"Validation dates: {split_date} to {max(all_dates)}")
-        print(f"Total unique dates: {len(all_dates)}")
-        
-        # Calculate some basic statistics
-        train_dates = train_data['date_id'].unique()
-        val_dates = val_data['date_id'].unique()
-        print(f"\nData ranges:")
-        print(f"Training  : {len(train_dates)} days")
-        print(f"           date_id range: {train_data['date_id'].min()} to {train_data['date_id'].max()}")
-        print(f"Validation: {len(val_dates)} days")
-        print(f"           date_id range: {val_data['date_id'].min()} to {val_data['date_id'].max()}")
-        
-        # Split the data
-        X = df.drop(exclude_cols + [Config.TARGET], axis=1).to_numpy()
-        y = df[Config.TARGET].to_numpy()
-        weights = df['weight'].to_numpy()
-        
-        return (
-            X[:train_size], X[train_size:],
-            y[:train_size], y[train_size:],
-            weights[:train_size], weights[train_size:]
-        )
-    
-    def split_data_random(self, df: pd.DataFrame, exclude_cols: List[str]) -> Tuple:
-        """
-        Randomly splits data into train and validation sets.
-        Uses stratification by date_id to ensure even temporal distribution.
-        """
-        print("\n🎲 Performing random train/validation split...")
-        
-        # Calculate sizes
-        total_samples = len(df)
-        val_size = int(total_samples * 0.01)  # 10% validation
-        
-        # Create random indices but stratify by date_id to ensure temporal coverage
-        from sklearn.model_selection import train_test_split
-        
-        train_idx, val_idx = train_test_split(
-            np.arange(total_samples),
-            test_size=val_size,
-            random_state=Config.RANDOM_STATE,
-            stratify=df['date_id']  # Stratify by date to ensure temporal coverage
-        )
-        
-        # Split the data using the indices
-        train_data = df.iloc[train_idx]
-        val_data = df.iloc[val_idx]
-        
-        # Logging information
-        print("\n📊 Split Statistics:")
-        print(f"Total samples: {total_samples:,}")
-        print(f"Training samples: {len(train_idx):,} ({len(train_idx)/total_samples*100:.1f}%)")
-        print(f"Validation samples: {len(val_idx):,} ({len(val_idx)/total_samples*100:.1f}%)")
-        
-        # Date coverage statistics
-        train_dates = train_data['date_id'].unique()
-        val_dates = val_data['date_id'].unique()
-        all_dates = df['date_id'].unique()
-        
-        print("\n📅 Date Coverage:")
-        print(f"Total unique dates: {len(all_dates)}")
-        print(f"Dates in training: {len(train_dates)} ({len(train_dates)/len(all_dates)*100:.1f}%)")
-        print(f"Dates in validation: {len(val_dates)} ({len(val_dates)/len(all_dates)*100:.1f}%)")
-        
-        # Prepare numpy arrays for model
-        X = df.drop(exclude_cols + [Config.TARGET], axis=1).to_numpy()
-        y = df[Config.TARGET].to_numpy()
-        weights = df['weight'].to_numpy()
-        
-        return (
-            X[train_idx], X[val_idx],
-            y[train_idx], y[val_idx],
-            weights[train_idx], weights[val_idx]
-        )
-    
-    def split_data_random_consecutive(self, df: pd.DataFrame, exclude_cols: List[str]) -> Tuple:
-        """
-        Splits data by randomly selecting 24 sets of 5 consecutive days for validation.
-        """
-        print("\n🎲 Performing random consecutive-day split...")
-        
-        # Get unique dates
-        all_dates = sorted(df['date_id'].unique())
-        
-        # Find valid starting positions (need 4 more days after each)
-        valid_starts = all_dates[:-30]  # Exclude last 4 days as they can't form a complete 5-day sequence
-        
-        # Randomly select 24 starting positions
-        np.random.seed(Config.RANDOM_STATE)
-        start_dates = np.random.choice(valid_starts, size=24, replace=False)
-        
-        # Create list of all validation dates (5 consecutive days for each start)
-        val_dates = []
-        for start in start_dates:
-            start_idx = np.where(all_dates == start)[0][0]
-            val_dates.extend(all_dates[start_idx:start_idx + 5])
-        
-        # Create masks for splitting
-        val_mask = df['date_id'].isin(val_dates)
-        train_mask = ~val_mask
-        
-        # Split the data
-        train_data = df[train_mask]
-        val_data = df[val_mask]
-        
-        # Logging information
-        print("\n📊 Split Statistics:")
-        print(f"Total samples: {len(df):,}")
-        print(f"Training samples: {len(train_data):,} ({len(train_data)/len(df)*100:.1f}%)")
-        print(f"Validation samples: {len(val_data):,} ({len(val_data)/len(df)*100:.1f}%)")
-        
-        print("\n📅 Date Coverage:")
-        print(f"Total unique dates: {len(all_dates)}")
-        print(f"Training days: {len(all_dates) - len(val_dates)}")
-        print(f"Validation days: {len(val_dates)} (24 sets of 5 consecutive days)")
-        print(f"Number of validation sequences: {len(start_dates)}")
-        
-        # Prepare numpy arrays for model
-        X = df.drop(exclude_cols + [Config.TARGET], axis=1).to_numpy()
-        y = df[Config.TARGET].to_numpy()
-        weights = df['weight'].to_numpy()
-        
-        return (
-            X[train_mask], X[val_mask],
-            y[train_mask], y[val_mask],
-            weights[train_mask], weights[val_mask]
-        )
