@@ -8,13 +8,13 @@ EXPERIMENT = {
     'data_source': 'null_flags_and_forward_fill',  # Options: 'raw' or 'null_flags_and_forward_fill'
     
     # Wandb settings
-    'wandb_run_name': "lgbm_first_1500_last_50",
+    'wandb_run_name': "lgbm_first_last_1000_last_50",
     'wandb_tags': ['lightgbm', 'gpu'],
     'wandb_project': "jane-street-market", # "jane-street-market" is the original
     
     # Core data settings
     'target': "responder_6",
-    'start_after_day': -1,  # Skip first X days of data (-1 uses all data)
+    'start_after_day': (1698 - 1000),  # Skip first X days of data (-1 uses all data)
      
     # Validation strategy
     'split_type': 'time',  # Options: 'time', 'random', 'consecutive'
@@ -29,7 +29,7 @@ EXPERIMENT = {
 VALIDATION = {
     # Time-based validation
     'time': {
-        'train_date_stop': 1500,   # Last date in training set
+        'train_date_stop': 1698,   # Last date in training set
         'val_date_start': 1648,    # First date in validation set 
         'val_date_stop': 1698      # Last date in validation set
     },
