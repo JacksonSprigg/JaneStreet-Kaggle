@@ -8,7 +8,7 @@ EXPERIMENT = {
     'model_type': 'mlp',  # Options: 'lgbm' or 'mlp'
     
     # Wandb settings
-    'wandb_run_name': "mlp_test",
+    'wandb_run_name': "mlp_test_1",
     'wandb_project': "jane-street-market",
     
     # Core data settings
@@ -40,12 +40,12 @@ CV_SETTINGS = {
 VALIDATION = {
     # Time-based validation
     'time': {
-        'train_date_stop': 50,   # Last date in training set
+        'train_date_stop': 1648,   # Last date in training set
         'val_date_start': 1648,    # First date in validation set 
         'val_date_stop': 1698      # Last date in validation set
     },
     'split_type': 'time',  # Options: 'time'
-    'skip_validation': True  # Option to skip validation
+    'skip_validation': False  # Option to skip validation
 }
 
 # LightGBM parameters
@@ -78,10 +78,10 @@ LGBM_PARAMS = {
 MLP_PARAMS = {
     # Architecture
     'hidden_dims': [192, 128, 64],  # Hidden layer dimensions
-    'dropout': 0.1,
+    'dropout': 0.05,
     
     # Training
-    'batch_size': 32768, #4096
+    'batch_size': 4096, #4096
     'epochs': 10,
     'learning_rate': 0.005,
     'weight_decay': 0, # 1e-5?
