@@ -3,7 +3,7 @@ import polars as pl
 import numpy as np
 
 from typing import Tuple, List
-from config import EXPERIMENT, VALIDATION
+from config import EXPERIMENT, VALIDATION, CV_SETTINGS
 from time import time
 
 class DataLoader:
@@ -23,7 +23,9 @@ class DataLoader:
     
     def _prepare_arrays(self, df: pl.DataFrame, mask: pl.Series, exclude_cols: List[str]) -> Tuple:
         """Convert filtered Polars DataFrame to numpy arrays for model"""
+        print(f"Original DataFrame size: {df.estimated_size()}")
         filtered = df.filter(mask)
+        print(f"Filtered DataFrame size: {filtered.estimated_size()}")
         
         # Get features (everything not in exclude_cols or target)
         X = filtered.select([
@@ -85,91 +87,35 @@ class DataLoader:
         
         return X_train, X_val, y_train, y_val, w_train, w_val
     
-    def split_data_consecutive(self, df: pl.DataFrame, exclude_cols: List[str]) -> Tuple:
-        """Random consecutive days with purge windows that can overlap each other"""
-        print("\n🎲 Performing consecutive-day split with purge windows...")
+    def split_data_cv(self, df: pl.DataFrame, exclude_cols: List[str]) -> int:
+        """
+        Instead of returning all fold data, just returns number of folds
+        and stores df and exclude_cols for later use
+        """
+        self.cv_df = df  # Store DataFrame for later use
+        self.cv_exclude_cols = exclude_cols
         
-        consecutive_config = VALIDATION['consecutive']
-        all_dates = df.get_column('date_id').unique().sort().to_list()
-        total_days = len(all_dates)
+        print("\nCV Fold Information:")
+        for fold_idx, window in enumerate(CV_SETTINGS['windows']):
+            print(f"\nFold {fold_idx + 1}")
+            print(f"Validation window: Days {window['start']}-{window['end']} (weight: {window['weight']:.4f})")
+            print(f"Training: Days 0-{window['start']-1} ({window['start']} days)")
+            print(f"Validation: Days {window['start']}-{window['end']} ({window['end'] - window['start'] + 1} days)")
         
-        # Don't restrict valid starts - any day could be a valid start
-        valid_starts = all_dates[:-consecutive_config['sequence_length']]  # Only ensure enough days for sequence
-        start_dates = []
-        val_and_purge_days = set()  # Track days that can't be used for new validation periods
-        validation_only_days = set() # Track just validation days
+        return len(CV_SETTINGS['windows'])
+
+    def get_fold_data(self, fold_idx: int) -> Tuple:
+        """Get data for a specific fold"""
+        window = CV_SETTINGS['windows'][fold_idx]
         
-        while len(start_dates) < consecutive_config['n_sequences'] and len(valid_starts) > 0:
-            candidate = np.random.choice(valid_starts)
-            candidate_idx = all_dates.index(candidate)
-            
-            # Check if validation period would overlap with any protected days
-            validation_range = all_dates[candidate_idx:candidate_idx + consecutive_config['sequence_length']]
-            if not any(day in val_and_purge_days for day in validation_range):
-                start_dates.append(candidate)
-                
-                # Add validation days to both sets
-                validation_only_days.update(validation_range)
-                val_and_purge_days.update(validation_range)
-                
-                # Calculate and add purge days only to val_and_purge_days
-                purge_start_idx = max(0, candidate_idx - consecutive_config['purge_before'])
-                purge_end_idx = min(total_days - 1, 
-                                candidate_idx + consecutive_config['sequence_length'] + 
-                                (consecutive_config['purge_after'] - consecutive_config['sequence_length']))
-                
-                # Add purge windows to protected days
-                val_and_purge_days.update(all_dates[purge_start_idx:candidate_idx])
-                val_and_purge_days.update(all_dates[
-                    candidate_idx + consecutive_config['sequence_length']:purge_end_idx + 1
-                ])
-                
-                # Only remove validation days from valid starts
-                valid_starts = [d for d in valid_starts if d not in validation_range]
+        train_mask = pl.col('date_id') < window['start']
+        val_mask = (pl.col('date_id') >= window['start']) & (pl.col('date_id') <= window['end'])
         
-        if len(start_dates) < consecutive_config['n_sequences']:
-            print(f"\n⚠️ Warning: Could only find {len(start_dates)} non-overlapping sequences")
-        
-        # Create validation and purge dates
-        val_dates = list(validation_only_days)
-        purge_dates = [d for d in val_and_purge_days if d not in validation_only_days]
-        
-        # Create masks for splitting
-        val_mask = pl.col('date_id').is_in(val_dates)
-        purge_mask = pl.col('date_id').is_in(purge_dates)
-        train_mask = ~(val_mask | purge_mask)
-        
-        # Get stats for printing
-        n_train = df.filter(train_mask).height
-        n_val = df.filter(val_mask).height
-        n_purge = df.filter(purge_mask).height
-        total = df.height
-        
-        print("\n📊 Split Statistics:")
-        print(f"Total samples: {total:,}")
-        print(f"Training samples: {n_train:,} ({n_train/total*100:.1f}%)")
-        print(f"Validation samples: {n_val:,} ({n_val/total*100:.1f}%)")
-        print(f"Purged samples: {n_purge:,} ({n_purge/total*100:.1f}%)")
-        
-        print("\n📅 Date Coverage:")
-        print(f"Training days: {len(df.filter(train_mask).get_column('date_id').unique())}")
-        print(f"Validation days: {len(set(val_dates))} "
-            f"({len(start_dates)} sets of {consecutive_config['sequence_length']} days)")
-        print(f"Purge days: {len(set(purge_dates))}")
-        
-        # Store metadata
-        self.val_metadata = {
-            'validation_dates': sorted(val_dates),
-            'purge_dates': sorted(purge_dates),
-            'n_sequences_found': len(start_dates)
-        }
-        
-        # Convert to numpy arrays
-        X_train, y_train, w_train = self._prepare_arrays(df, train_mask, exclude_cols)
-        X_val, y_val, w_val = self._prepare_arrays(df, val_mask, exclude_cols)
+        X_train, y_train, w_train = self._prepare_arrays(self.cv_df, train_mask, self.cv_exclude_cols)
+        X_val, y_val, w_val = self._prepare_arrays(self.cv_df, val_mask, self.cv_exclude_cols)
         
         return X_train, X_val, y_train, y_val, w_train, w_val
-
+    
     def load_and_prepare_data(self) -> Tuple:
         """Load, filter, and split the data"""
         print("\n🚀 Starting data loading process...")
@@ -181,7 +127,7 @@ class DataLoader:
             pl.int_range(pl.len(), dtype=pl.UInt64).alias("id") if 'id' not in pl.scan_parquet(self.data_path).columns else pl.col("id"),
             pl.all().exclude("id"),
         )        
-
+        
         feature_cols, exclude_cols = self.get_feature_columns(train)
         
         print(f"\nFiltering data after day {EXPERIMENT['start_after_day']}...")
@@ -195,19 +141,20 @@ class DataLoader:
         
         print(f"\nLoaded DataFrame shape: {train_df.shape}")
         
-        # Split data based on configured split type
+        # Split data based on validation strategy
         print("\nSplitting data into train/validation sets...")
-        split_type = EXPERIMENT['split_type']
-        if split_type == 'time':
-            result = self.split_data_time(train_df, exclude_cols)
-        elif split_type == 'consecutive':
-            result = self.split_data_consecutive(train_df, exclude_cols)
+        if EXPERIMENT['use_cv']:
+            n_folds = self.split_data_cv(train_df, exclude_cols)
+            print(f"CV mode: Prepared for {n_folds} folds")
+            print(f"\nData loading completed in {time() - start_time:.2f} seconds")
+            return n_folds
         else:
-            raise ValueError(f"Unknown split type: {split_type}")
-        
-        end_time = time()
-        print(f"\nData loading completed in {end_time - start_time:.2f} seconds")
-        print(f"Train set shape: {result[0].shape}")
-        print(f"Validation set shape: {result[1].shape}\n")
-        
-        return result
+            if VALIDATION['split_type'] == 'time':
+                result = self.split_data_time(train_df, exclude_cols)
+            else:
+                raise ValueError(f"Unknown split type: {VALIDATION['split_type']}")
+            
+            print(f"Train set shape: {result[0].shape}")
+            print(f"Validation set shape: {result[1].shape}\n")
+            print(f"\nData loading completed in {time() - start_time:.2f} seconds")
+            return result
