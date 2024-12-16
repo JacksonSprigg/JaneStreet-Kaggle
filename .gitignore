@@ -14,6 +14,7 @@ wandb/
 *.model
 *.txt
 *.json
+*.pt
 
 # Python cache files
 __pycache__/
