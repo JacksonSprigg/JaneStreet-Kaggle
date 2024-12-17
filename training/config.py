@@ -8,12 +8,12 @@ EXPERIMENT = {
     'model_type': 'mlp',  # Options: 'lgbm' or 'mlp'
     
     # Wandb settings
-    'wandb_run_name': "mlp_test_1",
+    'wandb_run_name': "mlp_test_1100-1300",
     'wandb_project': "jane-street-market",
     
     # Core data settings
     'target': "responder_6",
-    'start_after_day': -1, # -1 to start at day zero
+    'start_after_day': 1100, # -1 to start at day zero
     
     # Validation Strategy
     'use_cv': False,  # If True, uses CV_SETTINGS below. If False, uses VALIDATION settings
@@ -40,7 +40,7 @@ CV_SETTINGS = {
 VALIDATION = {
     # Time-based validation
     'time': {
-        'train_date_stop': 1648,   # Last date in training set
+        'train_date_stop': 1300,   # Last date in training set
         'val_date_start': 1648,    # First date in validation set 
         'val_date_stop': 1698      # Last date in validation set
     },
@@ -54,7 +54,7 @@ LGBM_PARAMS = {
     "objective": "regression_l2",
     "n_estimators": 10,
     "max_depth": 20,
-    "learning_rate": 0.001,
+    "learning_rate": 0.03,
     
     # Feature sampling
     "colsample_bytree": 0.6,
@@ -77,13 +77,13 @@ LGBM_PARAMS = {
 # MLP parameters
 MLP_PARAMS = {
     # Architecture
-    'hidden_dims': [192, 128, 64],  # Hidden layer dimensions
+    'hidden_dims': [512, 256, 128, 64],  # Hidden layer dimensions
     'dropout': 0.05,
     
     # Training
-    'batch_size': 4096, #4096
+    'batch_size': 128, #4096
     'epochs': 10,
-    'learning_rate': 0.005,
+    'learning_rate': 0.001,
     'weight_decay': 0, # 1e-5?
     
     # Performance settings

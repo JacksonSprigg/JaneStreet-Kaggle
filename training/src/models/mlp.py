@@ -9,9 +9,9 @@ from tqdm import tqdm
 from datetime import datetime
 import os
 import json
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any
 
-from src.utils.metrics import r2_score_weighted, r2_score_weighted_torch
+from src.utils.metrics import r2_score_weighted_torch
 from config import EXPERIMENT, VALIDATION, MLP_PARAMS, CV_SETTINGS
 
 class MLPModel(nn.Module):
@@ -215,7 +215,7 @@ class JaneStreetMLP:
                 pbar.set_postfix({'loss': f'{loss.item():.6f}'})
             
             # Evaluate once per epoch
-            train_r2 = self._evaluate(self.model, train_loader)
+            train_r2 = -epoch_loss / len(train_loader)
             val_r2 = self._evaluate(self.model, val_loader)
             
             print(f"\nEpoch {epoch+1}/{MLP_PARAMS['epochs']} - train_r2: {train_r2:.6f}, val_r2: {val_r2:.6f}")
@@ -224,7 +224,6 @@ class JaneStreetMLP:
             metrics = {
                 "epoch": epoch,
                 "train_r2": train_r2,
-                "loss": epoch_loss / len(train_loader),
             }
             
             if not VALIDATION.get('skip_validation', False):
